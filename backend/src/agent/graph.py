@@ -1,9 +1,11 @@
 from langgraph.graph import StateGraph, START, END
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 
 from agent.state import OverallState
 from agent.tools_and_schemas import SearchQueryList, Reflection
 from agent.llm.groq import GroqLLM
+
+from .search.local_markdown import search_markdown
 
 llm = GroqLLM()
 
@@ -17,31 +19,41 @@ def generate_search_queries(state: OverallState):
     queries = llm.invoke_structured(prompt, SearchQueryList)
 
     return {
-        "search_query": queries.query
+        "search_query": [q.model_dump() for q in queries.query]
     }
 
 
 def web_research(state: OverallState):
-    # ❗ тимчасовий fake research
-    results = [f"Result for: {q}" for q in state["search_query"]]
+    all_results = []
+
+    search_dir = state.get("search_dir")
+    if not search_dir:
+        return {"web_research_result": [], "sources_gathered": []}
+
+    for q in state["search_query"]:
+        query_text = q["query"]
+        matches = search_markdown(search_dir, query_text)
+        all_results.extend(matches)
 
     return {
-        "web_research_result": results
+        "web_research_result": all_results,
+        "sources_gathered": []
     }
 
 
 def reflect(state: OverallState):
     prompt = (
-        f"Question: {state['messages'][-1].content}\n\n"
-        f"Research results:\n" + "\n".join(state["web_research_result"])
+        f"Question:\n{state['messages'][-1].content}\n\n"
+        f"Research:\n" + "\n".join(state["web_research_result"])
     )
 
     reflection = llm.invoke_structured(prompt, Reflection)
 
     return {
         "is_sufficient": reflection.is_sufficient,
-        "knowledge_gap": reflection.knowledge_gap,
-        "follow_up_queries": reflection.follow_up_queries,
+        "follow_up_queries": [
+            q.model_dump() for q in reflection.follow_up_queries
+        ]
     }
 
 
